@@ -1,10 +1,7 @@
 import logging
 import os
-import time
-import webbrowser
 
 import cv2
-import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
 
