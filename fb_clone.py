@@ -36,7 +36,6 @@ def save_images(username):
     if not os.path.exists(user_folder):
         os.makedirs(user_folder)
 
-    st.info("Checking camera access...")
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
